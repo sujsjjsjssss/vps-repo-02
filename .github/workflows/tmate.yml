@@ -1,0 +1,270 @@
+name: ⚡ VPS & Bot Manager
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Auto restart every 6 hours
+  workflow_dispatch:
+    inputs:
+      bot_repo_url:
+        description: 'Bot Repository URL to clone'
+        required: false
+        default: 'https://github.com/Demomkumuro3/1'
+  repository_dispatch:
+    types: [create-vps]
+
+jobs:
+  vps-manager:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      VPS_NAME: ${{ github.event.client_payload.vps_name || 'auto-vps' }}
+      BOT_REPO_URL: ${{ github.event.inputs.bot_repo_url || github.event.client_payload.bot_repo_url || 'https://github.com/Demomkumuro3/1' }}
+    continue-on-error: true
+    steps:
+    - name: ⬇️ Checkout Repository
+      uses: actions/checkout@v3
+      
+    - name: 🔍 System Information
+      run: |
+        echo "🖥️ System Information:"
+        echo "OS: $(uname -a)"
+        echo "CPU: $(nproc) cores"
+        echo "Memory: $(free -h)"
+        echo "Disk: $(df -h /)"
+        echo "Python: $(python3 --version)"
+        echo "Node.js: $(node --version)"
+        echo "Git: $(git --version)"
+        echo "⏰ Started at: $(date)"
+        
+    - name: ⚙️ Setup Development Environment
+      uses: actions/setup-node@v3
+      with:
+        node-version: '20'
+        
+    - name: 🐍 Setup Python Environment
+      run: |
+        echo "🔧 Setting up Python environment..."
+        python3 -m pip install --upgrade pip
+        pip install requests psutil aiohttp paramiko rich colorama
+        echo "✅ Python environment ready"
+        
+    - name: 📦 Install Bot Dependencies & Setup
+      run: |
+        echo "🔧 Installing system dependencies..."
+        sudo apt update -y
+        sudo apt install -y curl wget git nano htop
+        
+        echo "🤖 Bot Repository URL: $BOT_REPO_URL"
+        echo "📥 Cloning bot repository: $BOT_REPO_URL"
+
+        if git clone "$BOT_REPO_URL" bot; then
+          echo "✅ Successfully cloned: $BOT_REPO_URL"
+        else
+          echo "❌ Failed to clone: $BOT_REPO_URL"
+          echo "🔄 Trying default repository..."
+          if git clone "https://github.com/Demomkumuro3/1" bot; then
+            echo "✅ Default repository cloned successfully"
+          else
+            echo "❌ Failed to clone default repository"
+            exit 1
+          fi
+        fi
+
+        if [ -d "bot" ]; then
+          cd bot
+        else
+          echo "❌ Bot directory not found"
+          exit 1
+        fi
+        
+        echo "📦 Installing Python bot dependencies..."
+        if pip install telebot psutil requests aiohttp paramiko rich pyTelegramBotAPI colorama; then
+          echo "✅ Python dependencies installed successfully"
+        else
+          echo "⚠️ Some Python dependencies may have failed to install"
+        fi
+
+        echo "📦 Installing Node.js dependencies..."
+        if npm install user-agents colors hpack socks; then
+          echo "✅ Node.js dependencies installed successfully"
+        else
+          echo "⚠️ Some Node.js dependencies may have failed to install"
+        fi
+        
+        # Try to find the main bot file
+        if [ -f "bot.py" ]; then
+          BOT_FILE="bot.py"
+        elif [ -f "main.py" ]; then
+          BOT_FILE="main.py"
+        elif [ -f "index.py" ]; then
+          BOT_FILE="index.py"
+        elif [ -f "app.py" ]; then
+          BOT_FILE="app.py"
+        else
+          echo "⚠️ No main bot file found, trying bot.py anyway"
+          BOT_FILE="bot.py"
+        fi
+
+        echo "🚀 Starting bot with file: $BOT_FILE"
+        if [ -f "$BOT_FILE" ]; then
+          nohup python "$BOT_FILE" > bot.log 2>&1 &
+          BOT_PID=$!
+          echo $BOT_PID > bot.pid
+
+          # Wait a moment and check if bot is still running
+          sleep 2
+          if kill -0 $BOT_PID 2>/dev/null; then
+            echo "✅ Bot started successfully!"
+            echo "📋 Bot PID: $BOT_PID"
+          else
+            echo "⚠️ Bot may have failed to start, check bot.log"
+            echo "📋 Bot PID: $BOT_PID (may be dead)"
+          fi
+        else
+          echo "❌ Bot file $BOT_FILE not found!"
+          echo "📋 Bot PID: N/A"
+        fi
+
+        echo "📄 Bot log: bot.log"
+        echo "🔗 Bot Repository: $BOT_REPO_URL"
+        echo "📝 Bot File: $BOT_FILE"
+        
+    - name: 🛠️ Setup VPS Tools & Scripts
+      run: |
+        echo "🛠️ Setting up VPS management tools..."
+        
+        # Create useful aliases
+        echo 'alias ll="ls -la"' >> ~/.bashrc
+        echo 'alias la="ls -A"' >> ~/.bashrc
+        echo 'alias l="ls -CF"' >> ~/.bashrc
+        echo 'alias ..="cd .."' >> ~/.bashrc
+        echo 'alias ...="cd ../.."' >> ~/.bashrc
+        echo 'alias grep="grep --color=auto"' >> ~/.bashrc
+        
+        # Create bot management script
+        cat > manage_bot.sh << 'EOF'
+        #!/bin/bash
+
+        # Auto-detect bot file
+        detect_bot_file() {
+          if [ -f "bot.py" ]; then
+            echo "bot.py"
+          elif [ -f "main.py" ]; then
+            echo "main.py"
+          elif [ -f "index.py" ]; then
+            echo "index.py"
+          elif [ -f "app.py" ]; then
+            echo "app.py"
+          else
+            echo "bot.py"
+          fi
+        }
+
+        case "$1" in
+          start)
+            cd bot
+            BOT_FILE=$(detect_bot_file)
+            nohup python "$BOT_FILE" > bot.log 2>&1 &
+            echo $! > bot.pid
+            echo "🚀 Bot started with PID: $(cat bot.pid) using file: $BOT_FILE"
+            ;;
+          stop)
+            if [ -f bot.pid ]; then
+              kill $(cat bot.pid) 2>/dev/null
+              rm -f bot.pid
+              echo "🛑 Bot stopped"
+            else
+              echo "❌ Bot PID file not found"
+            fi
+            ;;
+          status)
+            if [ -f bot.pid ] && kill -0 $(cat bot.pid) 2>/dev/null; then
+              echo "🟢 Bot is running (PID: $(cat bot.pid))"
+            else
+              echo "🔴 Bot is not running"
+            fi
+            ;;
+          log)
+            tail -f bot/bot.log
+            ;;
+          *)
+            echo "Usage: $0 {start|stop|status|log}"
+            ;;
+        esac
+        EOF
+        chmod +x manage_bot.sh
+        
+        echo "✅ VPS tools setup completed!"
+        
+    - name: 🚀 Start VPS Session (tmate)
+      uses: mxschmitt/action-tmate@v3
+      timeout-minutes: 360
+      with:
+        limit-access-to-actor: false
+        sudo: true
+
+    - name: ⏳ Keep VPS & Bot Alive
+      run: |
+        echo "🟢 VPS and Bot are running..."
+        echo "⏰ Session started at: $(date)"
+        echo "🔗 Repository: ${{ github.repository }}"
+        echo "🏷️ Workflow: ${{ github.workflow }}"
+        echo "🆔 Run ID: ${{ github.run_id }}"
+
+        # Monitor bot status and keep session alive
+        for i in $(seq 1 360); do
+          echo "🟢 Running minute $i/360 - $(date)"
+
+          # Check bot status every 30 minutes
+          if [ $((i % 30)) -eq 0 ]; then
+            if [ -f bot/bot.pid ] && kill -0 $(cat bot/bot.pid) 2>/dev/null; then
+              echo "✅ Bot is still running (PID: $(cat bot/bot.pid))"
+            else
+              echo "⚠️ Bot may have stopped, attempting restart..."
+              cd bot
+
+              # Auto-detect bot file for restart
+              if [ -f "bot.py" ]; then
+                BOT_FILE="bot.py"
+              elif [ -f "main.py" ]; then
+                BOT_FILE="main.py"
+              elif [ -f "index.py" ]; then
+                BOT_FILE="index.py"
+              elif [ -f "app.py" ]; then
+                BOT_FILE="app.py"
+              else
+                BOT_FILE="bot.py"
+              fi
+
+              nohup python "$BOT_FILE" > bot.log 2>&1 &
+              echo $! > bot.pid
+              echo "🔄 Bot restarted with PID: $(cat bot/bot.pid) using file: $BOT_FILE"
+              cd ..
+            fi
+          fi
+
+          sleep 60
+        done
+
+    - name: 🔁 Auto Restart Workflow
+      if: always()
+      run: |
+        echo "🔄 Session completed, triggering auto-restart..."
+        echo "⏰ Ended at: $(date)"
+
+        # Cleanup before restart
+        if [ -f bot/bot.pid ]; then
+          echo "🧹 Cleaning up bot process..."
+          kill $(cat bot/bot.pid) 2>/dev/null || true
+          rm -f bot/bot.pid
+        fi
+
+        # Trigger new workflow with same bot repository
+        curl -X POST \
+          -H "Accept: application/vnd.github+json" \
+          -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+          -H "Content-Type: application/json" \
+          https://api.github.com/repos/${{ github.repository }}/dispatches \
+          -d "{\"event_type\": \"create-vps\", \"client_payload\": {\"vps_name\": \"auto-restart-${{ github.run_number }}\", \"bot_repo_url\": \"$BOT_REPO_URL\"}}" \
+          || echo "⚠️ Failed to trigger auto-restart"
+
+        echo "✅ Auto-restart triggered successfully!"
